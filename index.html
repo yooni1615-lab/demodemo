@@ -1,0 +1,794 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>부산 민주주의 길 투어: 기억을 걷다</title>
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- 방문록을 구글 클라우드(Firebase/Firestore)에 저장하기 위한 SDK. 설정 방법은 아래 firebaseConfig 옆 주석 참고. -->
+    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Pretendard:wght@300;400;600;800;900&display=swap');
+
+        :root {
+            --bg-paper: #fdfbf5;
+            --tour-accent: #5d5c58;
+            --419-red: #d32f2f;
+            --buma-orange: #f57c00;
+            --june-blue: #1976d2;
+            --eco-green: #6f9c78;
+            --eco-green-soft: #eaf1e6;
+            --eco-sky-soft: #e6f0ef;
+        }
+
+        body {
+            font-family: 'Pretendard', sans-serif;
+            background-color: var(--bg-paper);
+            color: #333;
+            overflow-x: hidden;
+        }
+
+        .view-section { display: none !important; opacity: 0; transition: opacity 0.5s ease-in-out; }
+        .view-section.active { display: block !important; }
+        .fade-in { opacity: 1; }
+        .fade-out { opacity: 0; }
+
+        /* Landing: warm eco-museum inspired tone */
+        #landing-view {
+            background: linear-gradient(180deg, #fdfbf5 0%, #f6f2e5 55%, var(--eco-sky-soft) 100%);
+        }
+        .hero-photo-wrap {
+            position: relative; overflow: hidden; border-radius: 28px;
+            box-shadow: 0 20px 30px -12px rgba(0,0,0,0.15);
+        }
+        .hero-photo-wrap img { width: 100%; height: 100%; object-fit: cover; }
+        .hero-photo-credit {
+            position: absolute; right: 12px; bottom: 10px; font-size: 10px; color: #fff;
+            background: rgba(0,0,0,0.35); padding: 3px 9px; border-radius: 999px; backdrop-filter: blur(2px);
+        }
+        #landing-map { background: var(--eco-sky-soft); }
+        .landing-course-card {
+            transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            border: 1px solid #ece4d0;
+        }
+        .landing-course-card:hover { transform: translateY(-4px); box-shadow: 0 16px 24px -10px rgba(0,0,0,0.14); }
+        .marker-pulse { animation: pulse-ring 2s cubic-bezier(0.215, 0.61, 0.355, 1) infinite; }
+        @keyframes pulse-ring { 0% { transform: scale(0.8); opacity: 0.5; } 100% { transform: scale(2.5); opacity: 0; } }
+        .landing-pin { border-radius: 50% 50% 50% 0; transform: rotate(-45deg); border: 3px solid white; box-shadow: 0 4px 6px rgba(0,0,0,0.3); display:flex; align-items:center; justify-content:center; }
+        .landing-pin span { transform: rotate(45deg); color:#fff; font-weight:800; font-size:13px; }
+
+        .leaflet-popup-content-wrapper { border-radius: 14px; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); }
+        .leaflet-popup-content { font-family: 'Pretendard', sans-serif; margin: 12px 16px; }
+        .custom-div-icon { background: transparent; border: none; }
+        .map-marker-pin { width: 28px; height: 28px; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); border: 3px solid white; box-shadow: 0 4px 6px rgba(0,0,0,0.3); transition: transform 0.2s; }
+        .map-marker-pin.pulsing { animation: pin-pulse 1.5s infinite alternate; }
+        @keyframes pin-pulse { 0% { transform: rotate(-45deg) scale(1); } 100% { transform: rotate(-45deg) scale(1.25); box-shadow: 0 8px 12px rgba(0,0,0,0.4); } }
+
+        /* Map popup: what happened here (summary) + link to the full place page */
+        .spot-popup { width: 250px; }
+        .spot-popup-cat { display: inline-block; font-size: 10px; font-weight: 800; padding: 2px 8px; border-radius: 999px; margin-bottom: 6px; }
+        .spot-popup-title { display: block; font-size: 15px; font-weight: 800; text-align: left; padding: 0; background: none; border: none; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 2px; }
+        .spot-popup-title:hover { opacity: .72; }
+        .spot-popup-desc { font-size: 12px; line-height: 1.65; color: #4b5563; margin: 7px 0 0; word-break: keep-all; }
+        .spot-popup-meta { font-size: 10px; color: #9ca3af; margin-top: 8px; }
+        .spot-popup-more { display: block; width: 100%; margin-top: 10px; padding: 7px 0; border-radius: 9px; color: #fff; font-size: 11px; font-weight: 800; border: none; cursor: pointer; }
+        .spot-popup-more:hover { filter: brightness(1.1); }
+
+        .rel-node-link {
+            background: none; border: none; padding: 0; margin: 0; cursor: pointer;
+            font-weight: 800; color: #1f2937; text-decoration: underline;
+            text-underline-offset: 3px; text-decoration-thickness: 2px; font: inherit;
+        }
+        .rel-node-link:hover { color: #111827; opacity: .7; }
+
+        /* GPS "locate me" control, overlaid on each Leaflet map */
+        .locate-btn {
+            position: absolute; top: 12px; right: 12px; z-index: 1000;
+            height: 36px; padding: 0 14px 0 12px; border-radius: 999px; background: #fff; border: none;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.25); display: flex; align-items: center; gap: 6px; justify-content: center;
+            font-size: 12px; font-weight: 800; color: #1976d2; white-space: nowrap;
+            cursor: pointer; transition: transform .2s ease;
+        }
+        .locate-btn:hover { transform: scale(1.05); }
+        .locate-btn .locate-icon { font-size: 15px; display: inline-block; }
+        .locate-btn.busy { opacity: .55; pointer-events: none; }
+        .locate-btn.busy .locate-icon { display: inline-block; animation: locate-spin 1s linear infinite; }
+        @keyframes locate-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        .my-location-dot {
+            width: 16px; height: 16px; border-radius: 50%; background: #1976d2; border: 3px solid white;
+            box-shadow: 0 0 0 4px rgba(25,118,210,0.35), 0 2px 4px rgba(0,0,0,0.3);
+            animation: my-location-pulse 2s infinite;
+        }
+        @keyframes my-location-pulse {
+            0% { box-shadow: 0 0 0 4px rgba(25,118,210,0.35), 0 2px 4px rgba(0,0,0,0.3); }
+            50% { box-shadow: 0 0 0 11px rgba(25,118,210,0.06), 0 2px 4px rgba(0,0,0,0.3); }
+            100% { box-shadow: 0 0 0 4px rgba(25,118,210,0.35), 0 2px 4px rgba(0,0,0,0.3); }
+        }
+
+        /* Team & RQ page */
+        .team-card { display: flex; align-items: center; gap: 14px; padding: 18px 20px; border-radius: 18px; background: #faf7f0; border: 1px solid #eee6d5; transition: transform .2s ease, box-shadow .2s ease; }
+        .team-card:hover { transform: translateY(-2px); box-shadow: 0 10px 18px -10px rgba(0,0,0,0.18); }
+        .team-avatar { width: 44px; height: 44px; border-radius: 50%; flex-shrink: 0; display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 900; font-size: 17px; box-shadow: 0 3px 6px rgba(0,0,0,0.18); }
+        .dim-card { padding: 20px; border-radius: 18px; background: var(--eco-green-soft); border: 1px solid #dce7d8; }
+        .dim-icon { font-size: 22px; }
+
+        /* Place (full) page */
+        .place-rel-item { position: relative; padding-left: 22px; margin-bottom: 18px; }
+        .place-rel-item::before { content: ''; position: absolute; left: 0; top: 7px; width: 9px; height: 9px; border-radius: 50%; background: currentColor; }
+        .place-triple { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12px; background: #faf7f0; border: 1px solid #eee6d5; border-radius: 999px; padding: 6px 12px; margin: 0 6px 8px 0; }
+        .place-triple b { font-weight: 800; color: #374151; }
+        .place-triple em { font-style: normal; font-size: 10px; color: #9ca3af; }
+
+        .modal-fade { opacity: 0; visibility: hidden; transition: all 0.3s ease; }
+        .modal-fade.show { opacity: 1; visibility: visible; }
+
+        .timeline-line { position: absolute; left: 20px; top: 0; bottom: 0; width: 2px; background: repeating-linear-gradient(to bottom, #e2ddd0 0, #e2ddd0 4px, transparent 4px, transparent 8px); z-index: 0; }
+        .timeline-item { position: relative; padding-left: 50px; margin-bottom: 26px; }
+        .timeline-dot { position: absolute; left: 11px; top: 5px; width: 20px; height: 20px; border-radius: 50%; border: 4px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.1); z-index: 10; }
+        .nav-link.active { background: #333; color: white !important; }
+        .nav-link:hover:not(.active) { background: var(--eco-green-soft) !important; color: var(--eco-green) !important; }
+
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #f1ede4; border-radius: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #d8cfba; border-radius: 4px; }
+
+        .gallery-img-container { overflow: hidden; border-radius: 1.25rem; cursor: pointer; position: relative; }
+        .gallery-img-container img { transition: transform 0.5s ease; }
+        .gallery-img-container:hover img { transform: scale(1.06); }
+        .gallery-overlay { background: linear-gradient(to top, rgba(0,0,0,0.82) 0%, rgba(0,0,0,0) 100%); }
+
+        /* eco-museum inspired: soft pill filter row + route path */
+        .pill-tab { border-radius: 999px; transition: all .25s ease; }
+        #bus-route-container { overflow-x: auto; }
+        #bus-route-container::-webkit-scrollbar { height: 5px; }
+        .stop-badge { transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1); }
+        .stop-flag { position: absolute; top: -22px; font-size: 18px; opacity: 0; transform: translateY(4px) scale(0.6); transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1); }
+        .stop-flag.show { opacity: 1; transform: translateY(0) scale(1); }
+        .leaf-deco { opacity: .55; }
+
+        /* Archive Collections: horizontal scroll */
+        #archive-grid { scroll-snap-type: x proximity; }
+        #archive-grid > div { scroll-snap-align: start; }
+        .archive-scroll-hint { display: flex; align-items: center; gap: 6px; }
+
+        /* Guestbook corkboard */
+        .corkboard {
+            background-color: #b5875a;
+            background-image:
+                radial-gradient(rgba(0,0,0,0.12) 1px, transparent 1.4px),
+                linear-gradient(135deg, rgba(255,255,255,0.06) 0%, transparent 40%);
+            background-size: 14px 14px, auto;
+            box-shadow: inset 0 3px 10px rgba(0,0,0,0.35), 0 8px 20px rgba(0,0,0,0.15);
+            border: 10px solid #8a6339;
+        }
+        .sticky-note {
+            width: 150px; min-height: 150px; padding: 14px 12px;
+            display: flex; flex-direction: column; cursor: pointer;
+            box-shadow: 3px 4px 10px rgba(0,0,0,0.25);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+            position: relative;
+        }
+        .sticky-note:hover { transform: scale(1.06) rotate(0deg) !important; box-shadow: 4px 8px 16px rgba(0,0,0,0.3); z-index: 5; }
+        .sticky-pin { width: 12px; height: 12px; border-radius: 50%; background: radial-gradient(circle at 35% 35%, #f66, #b00); margin: 0 auto 8px; box-shadow: 0 2px 3px rgba(0,0,0,0.4); }
+        .sticky-thumb { width: 100%; height: 60px; object-fit: cover; border-radius: 4px; margin-bottom: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.2); }
+        .sticky-preview { font-size: 12px; line-height: 1.4; color: #4a4a3d; flex-grow: 1; word-break: break-word; }
+        .sticky-name { font-size: 10px; color: #6b6b5a; margin-top: 8px; text-align: right; font-weight: 700; }
+        .sticky-add {
+            align-items: center; justify-content: center; background: rgba(255,255,255,0.85) !important;
+            border: 2px dashed #a08c6a; color: #8a7a5c; box-shadow: none;
+        }
+        .sticky-add:hover { background: #fff !important; }
+    </style>
+</head>
+<body class="p-0 m-0">
+
+    <!-- LANDING VIEW -->
+    <div id="landing-view" class="view-section active fade-in">
+      <div class="min-h-screen flex flex-col items-center justify-center py-12 px-4 sm:px-6">
+        <header class="text-center max-w-3xl mx-auto mb-10 mt-10">
+            <div class="inline-flex items-center justify-center gap-2 mb-4">
+                <div class="w-10 h-10 bg-black text-white rounded-xl flex items-center justify-center font-black text-sm shadow-md">釜</div>
+                <span class="font-extrabold tracking-widest text-gray-400 text-sm">ARCHIVE LAB EDU</span>
+            </div>
+            <h1 class="text-4xl md:text-5xl font-black leading-tight tracking-tight mb-4 text-gray-900">부산 민주주의 길 투어</h1>
+            <p class="text-lg text-gray-500 leading-relaxed word-keep">
+                발길이 닿는 곳마다 피어난 자유의 외침.<br class="hidden sm:block">
+                지도 위의 거점을 클릭하여 그 날, 그 장소의 뜨거웠던 역사 속으로 걸어 들어가 보세요.
+            </p>
+            <p class="text-[11px] text-gray-400 mt-3">민주화운동기념사업회 오픈아카이브 · 부산민주공원 역사아카이브 사료 기반</p>
+        </header>
+
+        <main class="w-full max-w-6xl mx-auto space-y-6">
+            <div class="hero-photo-wrap w-full h-52 sm:h-64 md:h-80">
+                <img src="https://upload.wikimedia.org/wikipedia/commons/1/1d/Busan_Tower_and_Yongdusan_Park_20200522_002.jpg" alt="용두산공원에서 바라본 부산 원도심" loading="lazy">
+                <div class="hero-photo-credit">오늘날의 용두산공원·부산 원도심 · 촬영: Mobius6 · CC BY-SA 4.0 · Wikimedia Commons</div>
+            </div>
+
+            <div class="w-full rounded-[32px] md:rounded-[40px] border-4 border-white shadow-2xl overflow-hidden bg-white">
+                <div class="flex items-center justify-between px-5 sm:px-6 py-4 bg-white border-b border-gray-100">
+                    <span class="font-bold text-sm sm:text-base text-gray-800 flex items-center gap-2">🗺️ 기억의 이정표를 따라, 부산의 시간 속으로 역사 여행을 시작해 보세요.</span>
+                    <span class="text-[10px] sm:text-xs text-gray-400">지도 위 번호를 클릭하면 바로 이동합니다</span>
+                </div>
+                <div id="landing-map" class="w-full h-[280px] sm:h-[340px] md:h-[380px] relative">
+                    <button type="button" class="locate-btn" title="내 위치 보기" onclick="locateOnLandingMap(this)"><span class="locate-icon">📍</span>내 위치 보기</button>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 p-5 sm:p-6 bg-[#f7f3e6]">
+                    <button onclick="openEventDetail('419')" class="landing-course-card bg-white/95 p-5 rounded-2xl shadow-sm text-left cursor-pointer">
+                        <div class="flex justify-between items-start mb-2">
+                            <span class="text-[10px] font-black text-red-600 tracking-widest bg-red-50 px-2 py-1 rounded-md">4.19 혁명</span>
+                            <span class="text-[10px] text-gray-400 font-bold">1960</span>
+                        </div>
+                        <h3 class="font-extrabold text-lg mb-1 text-gray-900">혁명의 도화선, 마산에서 부산까지</h3>
+                        <p class="text-xs text-gray-500 mb-3 font-medium leading-relaxed">3·15 마산의거의 발포에서 부산진경찰서 앞 항거까지, 사료로 되짚는 13곳의 현장.</p>
+                        <div class="inline-flex items-center text-xs font-bold text-red-600">이 코스 걷기 &rarr;</div>
+                    </button>
+
+                    <button onclick="openEventDetail('buma')" class="landing-course-card bg-white/95 p-5 rounded-2xl shadow-sm text-left cursor-pointer">
+                        <div class="flex justify-between items-start mb-2">
+                            <span class="text-[10px] font-black text-orange-600 tracking-widest bg-orange-50 px-2 py-1 rounded-md">부마민주항쟁</span>
+                            <span class="text-[10px] text-gray-400 font-bold">1979</span>
+                        </div>
+                        <h3 class="font-extrabold text-lg mb-1 text-gray-900">유신의 심장을 겨누다</h3>
+                        <p class="text-xs text-gray-500 mb-3 font-medium leading-relaxed">부산대 교문을 나선 외침이 마산까지 번져 계엄과 위수령을 부른 열흘.</p>
+                        <div class="inline-flex items-center text-xs font-bold text-orange-600">이 코스 걷기 &rarr;</div>
+                    </button>
+
+                    <button onclick="openEventDetail('june')" class="landing-course-card bg-white/95 p-5 rounded-2xl shadow-sm text-left cursor-pointer">
+                        <div class="flex justify-between items-start mb-2">
+                            <span class="text-[10px] font-black text-blue-600 tracking-widest bg-blue-50 px-2 py-1 rounded-md">6월 민주항쟁</span>
+                            <span class="text-[10px] text-gray-400 font-bold">1987</span>
+                        </div>
+                        <h3 class="font-extrabold text-lg mb-1 text-gray-900">가톨릭센터, 그리고 이태춘</h3>
+                        <p class="text-xs text-gray-500 mb-3 font-medium leading-relaxed">서면 30만 인파의 함성과 고가도로에서 스러진 한 노동자의 이야기.</p>
+                        <div class="inline-flex items-center text-xs font-bold text-blue-600">이 코스 걷기 &rarr;</div>
+                    </button>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <button onclick="openCoursesPage()" class="landing-course-card w-full bg-white/95 p-5 sm:p-6 rounded-2xl shadow-sm text-left cursor-pointer flex items-center justify-between gap-4">
+                    <span>
+                        <span class="flex items-center gap-2 font-extrabold text-base sm:text-lg text-gray-900 mb-1">🚶 여행 코스</span>
+                        <span class="block text-xs text-gray-500 font-medium leading-relaxed break-keep">직접 걸을 수 있는 6개 도보 코스와 각 코스를 그렇게 묶은 이유를 소개합니다.</span>
+                    </span>
+                    <span class="text-xs font-bold text-gray-400 shrink-0">열기 &rarr;</span>
+                </button>
+
+                <button onclick="openNetworkPage()" class="landing-course-card w-full bg-white/95 p-5 sm:p-6 rounded-2xl shadow-sm text-left cursor-pointer flex items-center justify-between gap-4">
+                    <span>
+                        <span class="flex items-center gap-2 font-extrabold text-base sm:text-lg text-gray-900 mb-1">🕸️ 통합 지식 네트워크</span>
+                        <span class="block text-xs text-gray-500 font-medium leading-relaxed break-keep">세 항쟁의 인물·장소·사건·기록을 하나의 그래프에서 한 번에 살펴봅니다.</span>
+                    </span>
+                    <span class="text-xs font-bold text-gray-400 shrink-0">열기 &rarr;</span>
+                </button>
+
+                <button onclick="openAboutPage()" class="landing-course-card w-full bg-white/95 p-5 sm:p-6 rounded-2xl shadow-sm text-left cursor-pointer flex items-center justify-between gap-4">
+                    <span>
+                        <span class="flex items-center gap-2 font-extrabold text-base sm:text-lg text-gray-900 mb-1">🙋 팀 소개 &amp; 연구 질문</span>
+                        <span class="block text-xs text-gray-500 font-medium leading-relaxed break-keep">이 프로젝트를 만든 팀과, 우리가 던진 핵심 질문(RQ)을 소개합니다.</span>
+                    </span>
+                    <span class="text-xs font-bold text-gray-400 shrink-0">열기 &rarr;</span>
+                </button>
+            </div>
+        </main>
+        <footer class="mt-12 text-center">
+            <p class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-1">인문 데이터로 부산(대) 그리기</p>
+            <p class="text-[11px] text-gray-300">© 2026 Archive Lab Edu Project.</p>
+        </footer>
+      </div>
+    </div>
+
+    <!-- DETAILS VIEW -->
+    <div id="details-view" class="view-section fade-out">
+        <nav class="fixed top-6 left-1/2 -translate-x-1/2 z-[100] w-[95%] sm:w-[90%] max-w-5xl bg-white/90 backdrop-blur-lg border border-gray-100 rounded-2xl shadow-xl px-4 sm:px-6 py-3 flex items-center justify-between">
+            <button onclick="backToLanding()" class="flex items-center gap-2 text-gray-500 hover:text-black transition-colors font-bold text-sm">
+                <span>&larr;</span> <span class="hidden sm:inline">전체 지도</span>
+            </button>
+            <div class="flex gap-1 text-xs sm:text-sm font-semibold overflow-x-auto no-scrollbar">
+                <button onclick="changeCourse('419')" id="nav-419" class="nav-link pill-tab whitespace-nowrap px-3 sm:px-4 py-2 text-gray-500 hover:bg-gray-50">4.19 혁명</button>
+                <button onclick="changeCourse('buma')" id="nav-buma" class="nav-link pill-tab whitespace-nowrap px-3 sm:px-4 py-2 text-gray-500 hover:bg-gray-50">부마항쟁</button>
+                <button onclick="changeCourse('june')" id="nav-june" class="nav-link pill-tab whitespace-nowrap px-3 sm:px-4 py-2 text-gray-500 hover:bg-gray-50">6월항쟁</button>
+            </div>
+        </nav>
+
+        <header class="pt-24 sm:pt-28 pb-10 sm:pb-12 px-4 sm:px-6 max-w-5xl mx-auto">
+            <div class="flex flex-col md:flex-row items-center gap-6 md:gap-10">
+                <img id="hero-course-img" src="" alt="" class="w-full md:w-64 h-40 md:h-40 object-cover rounded-2xl shadow-md shrink-0 order-1 md:order-2">
+                <div class="text-center md:text-left order-2 md:order-1">
+                    <span id="course-tag" class="inline-block px-4 py-1.5 rounded-full text-xs font-bold text-white mb-4 tracking-widest uppercase">Course Tag</span>
+                    <h1 id="main-title" class="text-2xl sm:text-3xl md:text-4xl font-black leading-tight mb-3 break-keep">코스 제목</h1>
+                    <p id="main-desc" class="text-sm sm:text-base text-gray-500 leading-relaxed break-keep">코스 설명</p>
+                </div>
+            </div>
+        </header>
+
+        <main class="max-w-7xl mx-auto px-4 grid grid-cols-1 lg:grid-cols-12 gap-8 pb-16">
+            <section class="lg:col-span-7 flex flex-col h-full">
+                <div class="bg-white p-5 sm:p-6 rounded-[24px] sm:rounded-[32px] shadow-sm border border-gray-100 flex-grow flex flex-col">
+                    <div class="flex items-center justify-between mb-6">
+                        <div>
+                            <h2 class="text-xl sm:text-2xl font-bold italic">🗺️ Tour Map</h2>
+                            <p class="text-xs sm:text-sm text-gray-400">지도나 노선도를 클릭하여 장소를 탐색하세요.</p>
+                        </div>
+                        <div class="text-right">
+                            <span class="text-[10px] sm:text-xs font-bold text-gray-300 block uppercase tracking-wider">Current Spot</span>
+                            <span id="current-location-name" class="font-bold text-sm sm:text-base text-gray-800">장소를 선택해주세요</span>
+                        </div>
+                    </div>
+
+                    <div class="flex flex-wrap items-center gap-2 mb-4">
+                        <span class="text-[10px] font-black text-gray-400 uppercase tracking-widest mr-1">🧭 도보 코스</span>
+                        <div id="tour-course-bar" class="flex flex-wrap gap-2"></div>
+                        <a id="tour-gmap-btn" href="#" target="_blank" rel="noopener" class="hidden ml-auto inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-[11px] font-bold text-white shadow-sm">🗺️ 구글 지도로 길찾기 &rarr;</a>
+                    </div>
+
+                    <div id="tour-map" class="w-full relative flex-grow min-h-[400px] lg:min-h-[500px] rounded-2xl border-2 border-gray-200 z-10">
+                        <button type="button" class="locate-btn" title="내 위치 보기" onclick="locateOnTourMap(this)"><span class="locate-icon">📍</span>내 위치 보기</button>
+                    </div>
+
+                    <div class="w-full mt-6 mb-2 relative shrink-0">
+                        <div class="flex items-center gap-2 mb-2">
+                            <span class="text-[10px] font-black text-gray-400 uppercase tracking-widest px-2">🌿 Tour Route</span>
+                        </div>
+                        <div id="bus-route-container" class="relative bg-white rounded-xl py-7 sm:py-8 border border-gray-100 flex items-center shadow-sm custom-scrollbar">
+                            <!-- Dynamic route stops -->
+                        </div>
+                    </div>
+
+                    <div id="spot-detail-box" class="mt-4 p-5 sm:p-6 rounded-2xl bg-[#faf7f0] border border-dashed border-gray-200 shrink-0 min-h-[160px] flex flex-col justify-center transition-all duration-300">
+                        <div id="spot-empty-state" class="flex flex-col items-center justify-center text-gray-400 gap-2 w-full">
+                            <span class="text-2xl">👆</span>
+                            <span class="text-sm font-bold">지도나 노선도에서 장소를 선택해주세요.</span>
+                        </div>
+                        <div id="spot-active-state" class="hidden w-full">
+                            <div class="flex gap-3 sm:gap-4 items-start flex-wrap">
+                                <div id="spot-category" class="px-2 sm:px-3 py-1 bg-white border border-gray-200 rounded-lg text-[10px] font-bold shrink-0">CATEGORY</div>
+                                <h3 id="spot-title" class="text-lg sm:text-xl font-bold break-keep">장소 제목</h3>
+                            </div>
+                            <p id="spot-desc" class="mt-4 text-gray-700 leading-relaxed text-sm break-keep">장소 설명</p>
+                            <button id="spot-more-btn" class="mt-4 px-4 py-2.5 rounded-xl text-white text-xs font-bold transition-transform hover:scale-[1.03]">전체 설명 보기 &rarr;</button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="lg:col-span-5 space-y-6 sm:space-y-8">
+                <div class="bg-white p-6 sm:p-8 rounded-[24px] sm:rounded-[32px] shadow-sm border border-gray-100 flex flex-col h-auto max-h-[600px]">
+                    <h2 class="text-xl sm:text-2xl font-bold mb-6 flex items-center gap-3 shrink-0">
+                        <span class="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-sm">👣</span>
+                        타임라인
+                    </h2>
+                    <div class="relative overflow-y-auto custom-scrollbar pr-4 flex-grow" id="timeline-container">
+                        <div class="timeline-line"></div>
+                    </div>
+                </div>
+
+                <button onclick="openNetworkPage()" class="landing-course-card w-full bg-white p-6 sm:p-8 rounded-[24px] sm:rounded-[32px] shadow-sm border border-gray-100 text-left cursor-pointer flex items-center justify-between gap-4">
+                    <span>
+                        <span class="flex items-center gap-3 text-lg sm:text-xl font-bold text-gray-900 mb-2">
+                            <span class="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-sm">🕸️</span>
+                            지식 네트워크
+                        </span>
+                        <span class="block text-[11px] sm:text-xs text-gray-500 leading-relaxed break-keep">
+                            사건·인물·장소의 연결 관계(Triple)는 세 항쟁을 합친 통합 페이지에서 살펴봅니다.
+                        </span>
+                    </span>
+                    <span class="text-xs font-bold text-gray-400 shrink-0">열기 &rarr;</span>
+                </button>
+            </section>
+        </main>
+
+        <section class="bg-[#eef2ea] py-16 sm:py-20 px-4 sm:px-6">
+            <div class="max-w-7xl mx-auto">
+                <div class="flex flex-col md:flex-row justify-between items-start md:items-end mb-8 gap-4">
+                    <div>
+                        <h2 class="text-2xl sm:text-3xl font-black mb-2">🌱 오늘의 그 자리, Photo Walk</h2>
+                        <p class="text-gray-500 text-sm">사건 현장은 오늘 이런 모습입니다. 저작권 프리(CC) 사진으로 담았습니다. (클릭 시 확대·출처 표기)</p>
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-4" id="gallery-grid"></div>
+            </div>
+        </section>
+
+        <section class="bg-white py-16 sm:py-24 px-4 sm:px-6">
+            <div class="max-w-7xl mx-auto">
+                <div class="flex flex-col md:flex-row justify-between items-start md:items-end mb-8 sm:mb-12 gap-4 sm:gap-6">
+                    <div>
+                        <h2 class="text-3xl sm:text-4xl font-black mb-3 sm:mb-4">Archive Collections</h2>
+                        <p class="text-gray-500 text-sm sm:text-base">클릭하여 공식 사료에 기반한 구체적인 역사적 고증 자료를 확인하세요.</p>
+                    </div>
+                    <span class="archive-scroll-hint text-xs font-bold text-gray-400 shrink-0">← 옆으로 스크롤 →</span>
+                </div>
+                <div id="archive-filter" class="flex flex-wrap gap-2 mb-6"></div>
+                <div class="flex gap-4 sm:gap-6 overflow-x-auto custom-scrollbar pb-4 -mx-1 px-1" id="archive-grid"></div>
+            </div>
+        </section>
+
+        <section class="bg-[#f4efe4]/60 py-16 sm:py-24 px-4 sm:px-6">
+            <div class="max-w-5xl mx-auto">
+                <div class="mb-8 sm:mb-10 text-center">
+                    <h2 class="text-3xl sm:text-4xl font-black mb-3">📌 방문록</h2>
+                    <p class="text-gray-500 text-sm sm:text-base">이 길을 걸은 분들의 사진과 소감을 남겨보세요. 포스트잇을 클릭하면 내용을 볼 수 있어요.</p>
+                    <p class="text-[11px] text-gray-400 mt-1">※ 남기신 기록은 이 브라우저에만 저장됩니다(서버 저장 아님).</p>
+                </div>
+                <div class="corkboard rounded-[28px] p-6 sm:p-10 shadow-inner">
+                    <div class="flex flex-wrap gap-5 sm:gap-7 justify-center" id="guestbook-board"></div>
+                </div>
+            </div>
+        </section>
+
+        <footer class="py-12 bg-white text-center px-4 border-t border-gray-100">
+            <p class="text-gray-400 text-sm font-bold tracking-wide">인문 데이터로 부산(대) 그리기 : 민주주의 투어 아카이브</p>
+            <p class="text-[11px] text-gray-300 mt-2">© 2026 Archive Lab Edu Project. 민주화운동기념사업회 오픈아카이브·부산민주공원 역사아카이브 등 공식 사료 기반.</p>
+        </footer>
+    </div>
+
+    <!-- ABOUT / TEAM & RQ VIEW -->
+    <div id="about-view" class="view-section fade-out">
+        <nav class="fixed top-6 left-1/2 -translate-x-1/2 z-[100] w-[95%] sm:w-[90%] max-w-5xl bg-white/90 backdrop-blur-lg border border-gray-100 rounded-2xl shadow-xl px-4 sm:px-6 py-3 flex items-center justify-between">
+            <button onclick="backFromAbout()" class="flex items-center gap-2 text-gray-500 hover:text-black transition-colors font-bold text-sm">
+                <span>&larr;</span> <span id="about-back-label">전체 지도</span>
+            </button>
+            <span class="text-xs sm:text-sm font-bold text-gray-800">🙋 팀 소개 &amp; RQ</span>
+        </nav>
+
+        <header class="pt-28 sm:pt-32 pb-10 px-4 sm:px-6 max-w-5xl mx-auto">
+            <p class="text-[11px] sm:text-xs font-black text-gray-400 tracking-widest uppercase mb-4">DH 이해하기 III · 팀 프로젝트 기획안 (B팀)</p>
+            <span class="inline-block px-4 py-1.5 rounded-full text-xs font-bold text-white mb-5 tracking-wide" style="background: var(--eco-green);">3. 팀 소개 및 프로젝트 주제(RQ) 소개</span>
+            <h1 class="text-3xl sm:text-4xl md:text-5xl font-black leading-tight mb-4 break-keep">부산 민주주의 트래커스</h1>
+            <p class="text-base sm:text-lg text-gray-600 leading-relaxed break-keep max-w-3xl">
+                프로젝트 제목 &mdash; <b class="text-gray-900">&lt;부산의 민주화 운동 한눈에 보기&gt;</b>
+            </p>
+        </header>
+
+        <main class="max-w-5xl mx-auto px-4 sm:px-6 pb-20 space-y-6">
+            <!-- RQ -->
+            <section class="rounded-[24px] sm:rounded-[32px] p-7 sm:p-10 shadow-sm border border-[#dce7d8]" style="background: linear-gradient(135deg, var(--eco-green-soft) 0%, var(--eco-sky-soft) 100%);">
+                <span class="text-[10px] font-black tracking-widest uppercase" style="color: var(--eco-green);">Research Question</span>
+                <h2 class="text-2xl sm:text-3xl md:text-4xl font-black mt-3 leading-snug break-keep text-gray-900">
+                    “부산에서 민주화 운동은<br class="hidden sm:block"> 어떻게 나타났는가?”
+                </h2>
+            </section>
+
+            <!-- 팀원 -->
+            <section class="bg-white p-6 sm:p-8 rounded-[24px] sm:rounded-[32px] shadow-sm border border-gray-100">
+                <h2 class="text-xl sm:text-2xl font-bold mb-1 flex items-center gap-3">
+                    <span class="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-sm">👥</span>
+                    팀원과 역할
+                </h2>
+                <p class="text-xs text-gray-400 mb-6 pl-11">네 사람이 조사 · 정리 · 시각화 · 발표를 나눠 맡았습니다.</p>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div class="team-card">
+                        <div class="team-avatar" style="background:#d32f2f;">김</div>
+                        <div>
+                            <h3 class="font-black text-base text-gray-900">김유진</h3>
+                            <p class="text-xs text-gray-500 mt-0.5">조장 및 발표</p>
+                        </div>
+                    </div>
+                    <div class="team-card">
+                        <div class="team-avatar" style="background:#f57c00;">민</div>
+                        <div>
+                            <h3 class="font-black text-base text-gray-900">민태일</h3>
+                            <p class="text-xs text-gray-500 mt-0.5">자료 조사</p>
+                        </div>
+                    </div>
+                    <div class="team-card">
+                        <div class="team-avatar" style="background:#1976d2;">윤</div>
+                        <div>
+                            <h3 class="font-black text-base text-gray-900">윤서현</h3>
+                            <p class="text-xs text-gray-500 mt-0.5">시각화</p>
+                        </div>
+                    </div>
+                    <div class="team-card">
+                        <div class="team-avatar" style="background:#6f9c78;">유</div>
+                        <div>
+                            <h3 class="font-black text-base text-gray-900">유서형</h3>
+                            <p class="text-xs text-gray-500 mt-0.5">데이터 정리</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 프로젝트 설명 -->
+            <section class="bg-white p-6 sm:p-8 rounded-[24px] sm:rounded-[32px] shadow-sm border border-gray-100">
+                <h2 class="text-xl sm:text-2xl font-bold mb-1 flex items-center gap-3">
+                    <span class="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-sm">📖</span>
+                    프로젝트 설명
+                </h2>
+                <p class="text-xs text-gray-400 mb-6 pl-11">무엇을, 왜 만들었는지.</p>
+
+                <p class="text-lg sm:text-xl font-black text-gray-900 mb-3 break-keep">부산 민주주의 길 투어: 인문 데이터로 그리는 부산 민주화 지도</p>
+                <p class="text-sm sm:text-base text-gray-700 leading-loose break-keep">
+                    흩어져 있던 부산 지역의 민주화 운동 사료를 디지털 인문학 관점에서 재구성하여 스토리맵과 관계망 그래프로 시각화한 프로젝트입니다.
+                    파편화된 공식 사료들을 하나의 스토리로 연결하여, 누구나 생생하게 그날의 거리를 거닐며 민주주의의 가치를 탐색할 수 있도록 기획했습니다.
+                </p>
+
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-7">
+                    <div class="dim-card">
+                        <span class="dim-icon">🗺️</span>
+                        <h4 class="font-black text-sm text-gray-900 mt-3">공간</h4>
+                        <p class="text-[11px] text-gray-400 font-bold">스토리맵</p>
+                        <p class="text-xs text-gray-600 mt-2 leading-relaxed break-keep">항쟁이 벌어진 32곳을 지도와 노선도 위에 올리고, 장소마다 무슨 일이 있었는지 붙였습니다.</p>
+                    </div>
+                    <div class="dim-card">
+                        <span class="dim-icon">👣</span>
+                        <h4 class="font-black text-sm text-gray-900 mt-3">시간</h4>
+                        <p class="text-[11px] text-gray-400 font-bold">타임라인</p>
+                        <p class="text-xs text-gray-600 mt-2 leading-relaxed break-keep">항쟁별 연표로 사건이 번져 나간 순서와 속도를 따라갑니다.</p>
+                    </div>
+                    <div class="dim-card">
+                        <span class="dim-icon">🕸️</span>
+                        <h4 class="font-black text-sm text-gray-900 mt-3">인물 및 단체</h4>
+                        <p class="text-[11px] text-gray-400 font-bold">네트워크</p>
+                        <p class="text-xs text-gray-600 mt-2 leading-relaxed break-keep">인물·장소·사건·기록의 관계(Triple)를 그래프로 잇고, 세 항쟁을 한 화면에 겹쳐 봅니다.</p>
+                    </div>
+                </div>
+            </section>
+
+            <div class="flex flex-col sm:flex-row gap-3">
+                <button onclick="backFromAbout()" class="flex-1 py-4 rounded-2xl bg-white border border-gray-200 font-bold text-sm text-gray-600 hover:bg-gray-50 transition-colors">&larr; 전체 지도로 돌아가기</button>
+                <button onclick="openNetworkPage()" class="flex-1 py-4 rounded-2xl bg-white border border-gray-200 font-bold text-sm text-gray-600 hover:bg-gray-50 transition-colors">🕸️ 통합 지식 네트워크 보기</button>
+            </div>
+
+            <p class="text-[11px] text-gray-400 text-center leading-relaxed break-keep pt-2">
+                민주화운동기념사업회 오픈아카이브 · 부산민주공원 역사아카이브 사료 기반.<br class="hidden sm:block">
+                인문 데이터로 부산(대) 그리기 · DH 이해하기 III 팀 프로젝트.
+            </p>
+        </main>
+    </div>
+
+    <!-- KNOWLEDGE NETWORK (FULL) VIEW -->
+    <div id="network-view" class="view-section fade-out">
+        <nav class="fixed top-6 left-1/2 -translate-x-1/2 z-[100] w-[95%] sm:w-[90%] max-w-6xl bg-white/90 backdrop-blur-lg border border-gray-100 rounded-2xl shadow-xl px-4 sm:px-6 py-3 flex items-center justify-between">
+            <button onclick="backFromNetwork()" class="flex items-center gap-2 text-gray-500 hover:text-black transition-colors font-bold text-sm">
+                <span>&larr;</span> <span id="network-back-label">전체 지도</span>
+            </button>
+            <span class="text-xs sm:text-sm font-bold text-gray-800">🕸️ 통합 지식 네트워크</span>
+        </nav>
+
+        <header class="pt-28 sm:pt-32 pb-8 px-4 sm:px-6 max-w-6xl mx-auto">
+            <h1 class="text-3xl sm:text-4xl md:text-5xl font-black leading-tight mb-4 break-keep">세 항쟁을 한 장에</h1>
+            <p class="text-sm sm:text-base text-gray-600 leading-relaxed break-keep max-w-3xl">
+                4·19 혁명 · 부마민주항쟁 · 6월 민주항쟁의 지식 네트워크를 하나의 그래프로 합쳤습니다.
+                <b>원 안쪽 색은 유형</b>, <b>테두리 색은 항쟁</b>을 나타냅니다. 노드를 클릭하면 그 항목이 맺은 관계를 볼 수 있습니다.
+            </p>
+            <p id="network-stats" class="text-[11px] text-gray-400 mt-4"></p>
+        </header>
+
+        <main class="max-w-6xl mx-auto px-4 sm:px-6 pb-20 space-y-5">
+            <div class="bg-white rounded-[24px] shadow-sm border border-gray-100 p-5 sm:p-6 space-y-5">
+                <div>
+                    <span class="text-[10px] font-black text-gray-400 uppercase tracking-widest">항쟁 필터</span>
+                    <div id="network-course-filter" class="flex flex-wrap gap-2 mt-3"></div>
+                </div>
+                <div class="border-t border-gray-100 pt-5">
+                    <span class="text-[10px] font-black text-gray-400 uppercase tracking-widest">유형 범례</span>
+                    <div id="network-type-legend" class="flex flex-wrap gap-x-4 gap-y-2 mt-3"></div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-12 gap-5">
+                <div class="lg:col-span-8">
+                    <div id="combined-network" class="w-full h-[520px] sm:h-[640px] bg-[#faf7f0] border border-dashed border-gray-200 rounded-[24px] overflow-hidden cursor-move"></div>
+                    <p class="text-[11px] text-gray-400 mt-3 px-1">드래그로 이동, 스크롤로 확대/축소할 수 있습니다.</p>
+                </div>
+                <aside class="lg:col-span-4">
+                    <div class="bg-white rounded-[24px] shadow-sm border border-gray-100 p-6 lg:sticky lg:top-28">
+                        <div id="network-detail-empty" class="text-center py-10 text-gray-400">
+                            <div class="text-3xl mb-3">👆</div>
+                            <p class="text-sm font-bold">노드를 클릭해보세요.</p>
+                            <p class="text-xs mt-1">그 항목이 맺은 관계가 여기에 나타납니다.</p>
+                        </div>
+                        <div id="network-detail" class="hidden">
+                            <div id="network-detail-photo-wrap" class="hidden w-full h-40 rounded-2xl overflow-hidden mb-4 relative">
+                                <img id="network-detail-photo" src="" alt="" class="w-full h-full object-cover">
+                                <p id="network-detail-photo-credit" class="absolute bottom-0 inset-x-0 text-[10px] text-white/90 bg-black/35 px-3 py-1.5"></p>
+                            </div>
+                            <div class="flex flex-wrap items-center gap-2 mb-3">
+                                <span id="network-detail-type" class="px-2.5 py-1 rounded-lg text-[10px] font-black tracking-widest uppercase">TYPE</span>
+                                <span id="network-detail-courses" class="flex flex-wrap gap-1.5"></span>
+                            </div>
+                            <h3 id="network-detail-label" class="text-xl font-black break-keep mb-3">노드</h3>
+                            <div id="network-detail-desc-wrap" class="hidden mb-4 p-4 rounded-2xl bg-[#faf7f0] border border-dashed border-gray-200">
+                                <p id="network-detail-desc" class="text-sm text-gray-700 leading-relaxed break-keep"></p>
+                                <p id="network-detail-desc-source" class="text-[10px] text-gray-400 mt-2"></p>
+                            </div>
+                            <div id="network-detail-actions" class="flex flex-wrap gap-2 mb-5"></div>
+                            <span class="text-[10px] font-black text-gray-400 uppercase tracking-widest">관계</span>
+                            <div id="network-detail-relations" class="mt-3 max-h-[320px] overflow-y-auto custom-scrollbar pr-2"></div>
+                        </div>
+                    </div>
+                </aside>
+            </div>
+
+            <p class="text-[11px] text-gray-400 text-center leading-relaxed break-keep pt-2">
+                민주화운동기념사업회 오픈아카이브 · 부산민주공원 역사아카이브 사료 기반.<br class="hidden sm:block">
+                두 항쟁에 함께 등장하는 항목은 하나의 노드로 합치고 검은 테두리로 표시했습니다.
+            </p>
+        </main>
+    </div>
+
+    <!-- PLACE (FULL) VIEW -->
+    <div id="place-view" class="view-section fade-out">
+        <nav class="fixed top-6 left-1/2 -translate-x-1/2 z-[100] w-[95%] sm:w-[90%] max-w-5xl bg-white/90 backdrop-blur-lg border border-gray-100 rounded-2xl shadow-xl px-4 sm:px-6 py-3 flex items-center justify-between">
+            <button onclick="backToCourse()" class="flex items-center gap-2 text-gray-500 hover:text-black transition-colors font-bold text-sm">
+                <span>&larr;</span> <span id="place-back-label">코스로 돌아가기</span>
+            </button>
+            <span id="place-course-tag" class="px-3 py-1.5 rounded-full text-[10px] sm:text-xs font-bold text-white tracking-widest uppercase">Course</span>
+        </nav>
+
+        <header class="pt-28 sm:pt-32 pb-8 px-4 sm:px-6 max-w-5xl mx-auto">
+            <div class="flex flex-col md:flex-row gap-6 md:gap-8 items-start">
+                <div id="place-photo-wrap" class="w-full md:w-72 h-44 md:h-44 rounded-2xl shadow-md shrink-0 overflow-hidden relative">
+                    <img id="place-photo-img" src="" alt="" class="w-full h-full object-cover hidden">
+                    <div id="place-photo-fallback" class="w-full h-full flex items-center justify-center text-6xl"></div>
+                    <p id="place-photo-credit" class="absolute bottom-0 inset-x-0 text-[10px] text-white/90 bg-black/35 px-3 py-1.5"></p>
+                </div>
+                <div class="flex-1">
+                    <span id="place-cat" class="inline-block px-3 py-1 rounded-lg text-[11px] font-black tracking-widest mb-4">CATEGORY</span>
+                    <h1 id="place-name" class="text-3xl sm:text-4xl md:text-5xl font-black leading-tight mb-5 break-keep">장소 이름</h1>
+                    <p id="place-desc" class="text-base sm:text-lg text-gray-600 leading-relaxed break-keep max-w-3xl">장소 설명</p>
+                    <p id="place-coords" class="text-[11px] text-gray-400 mt-4"></p>
+                </div>
+            </div>
+        </header>
+
+        <main class="max-w-5xl mx-auto px-4 sm:px-6 pb-20 space-y-8">
+            <div id="place-map" class="w-full h-[260px] sm:h-[320px] rounded-[24px] border-2 border-gray-200 z-10 relative">
+                <button type="button" class="locate-btn" title="내 위치 보기" onclick="locateOnPlaceMap(this)"><span class="locate-icon">📍</span>내 위치 보기</button>
+            </div>
+
+            <section class="bg-white p-6 sm:p-8 rounded-[24px] sm:rounded-[32px] shadow-sm border border-gray-100">
+                <h2 class="text-xl sm:text-2xl font-bold mb-2 flex items-center gap-3">
+                    <span class="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-sm">👣</span>
+                    이곳과 이어지는 사건
+                </h2>
+                <p class="text-xs text-gray-400 mb-6">이 장소의 이름 또는 설명과 연결되는 연표 기록입니다.</p>
+                <div id="place-timeline"></div>
+            </section>
+
+            <section id="place-archive-section" class="bg-white p-6 sm:p-8 rounded-[24px] sm:rounded-[32px] shadow-sm border border-gray-100">
+                <h2 class="text-xl sm:text-2xl font-bold mb-2 flex items-center gap-3">
+                    <span class="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-sm">🗂️</span>
+                    이곳과 이어지는 인물·사료
+                </h2>
+                <p class="text-xs text-gray-400 mb-6">카드를 클릭하면 사료 상세 내용이 열립니다.</p>
+                <div id="place-archives" class="grid grid-cols-1 sm:grid-cols-2 gap-4"></div>
+            </section>
+
+            <section id="place-relation-section" class="bg-white p-6 sm:p-8 rounded-[24px] sm:rounded-[32px] shadow-sm border border-gray-100">
+                <h2 class="text-xl sm:text-2xl font-bold mb-2 flex items-center gap-3">
+                    <span class="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-sm">🕸️</span>
+                    지식 네트워크 관계
+                </h2>
+                <p class="text-xs text-gray-400 mb-6">이 장소 노드가 맺고 있는 Triple 관계입니다.</p>
+                <div id="place-relations"></div>
+            </section>
+
+            <div class="flex flex-col sm:flex-row gap-3">
+                <button onclick="backToCourse()" class="flex-1 py-4 rounded-2xl bg-white border border-gray-200 font-bold text-sm text-gray-600 hover:bg-gray-50 transition-colors">&larr; 코스 지도로 돌아가기</button>
+                <button onclick="backToLandingFromPlace()" class="flex-1 py-4 rounded-2xl bg-white border border-gray-200 font-bold text-sm text-gray-600 hover:bg-gray-50 transition-colors">전체 지도로 가기</button>
+            </div>
+
+            <p class="text-[11px] text-gray-400 text-center leading-relaxed break-keep">
+                민주화운동기념사업회 오픈아카이브 · 부산민주공원 역사아카이브 사료를 기반으로,<br class="hidden sm:block">
+                이 장소와 연결되는 코스 데이터를 모아 구성한 문서입니다.
+            </p>
+        </main>
+    </div>
+
+    <!-- WALKING COURSES (FULL) VIEW -->
+    <div id="courses-view" class="view-section fade-out">
+        <nav class="fixed top-6 left-1/2 -translate-x-1/2 z-[100] w-[95%] sm:w-[90%] max-w-5xl bg-white/90 backdrop-blur-lg border border-gray-100 rounded-2xl shadow-xl px-4 sm:px-6 py-3 flex items-center justify-between">
+            <button onclick="backFromCourses()" class="flex items-center gap-2 text-gray-500 hover:text-black transition-colors font-bold text-sm">
+                <span>&larr;</span> <span id="courses-back-label">전체 지도</span>
+            </button>
+            <span class="text-xs sm:text-sm font-bold text-gray-800">🚶 여행 코스</span>
+        </nav>
+
+        <header class="pt-28 sm:pt-32 pb-8 px-4 sm:px-6 max-w-5xl mx-auto">
+            <span class="inline-block px-4 py-1.5 rounded-full text-xs font-bold text-white mb-5 tracking-wide" style="background: var(--eco-green);">부산 민주주의 길 투어 · 도보 코스 구성</span>
+            <h1 class="text-3xl sm:text-4xl md:text-5xl font-black leading-tight mb-5 break-keep">기억의 이정표를 따라,<br class="hidden sm:block">직접 걸어보는 6개의 길</h1>
+            <p class="text-base sm:text-lg text-gray-600 leading-relaxed break-keep max-w-3xl">
+                사이트에 반영한 부산 도보 코스 6개의 경로와, 각 코스를 그렇게 묶은 이유를 정리했습니다.
+                모든 지점 설명은 민주화운동기념사업회 오픈아카이브·부산민주공원 역사아카이브 기반의 사이트 데이터에서 가져왔습니다.
+            </p>
+        </header>
+
+        <main class="max-w-5xl mx-auto px-4 sm:px-6 pb-20 space-y-8">
+            <!-- 구성 원칙 -->
+            <section class="bg-white p-6 sm:p-8 rounded-[24px] sm:rounded-[32px] shadow-sm border border-gray-100">
+                <h2 class="text-xl sm:text-2xl font-bold mb-5 flex items-center gap-3">
+                    <span class="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-sm">📐</span>
+                    전체 구성 원칙
+                </h2>
+                <div id="courses-principles" class="grid grid-cols-1 sm:grid-cols-2 gap-4"></div>
+            </section>
+
+            <!-- 코스 목록 -->
+            <div id="courses-list" class="space-y-8"></div>
+
+            <!-- 공통 참고 -->
+            <section class="p-6 sm:p-8 rounded-[24px] sm:rounded-[32px] border border-[#dce7d8]" style="background: var(--eco-green-soft);">
+                <h2 class="text-lg sm:text-xl font-bold mb-4 flex items-center gap-3">
+                    <span class="w-8 h-8 rounded-full bg-white flex items-center justify-center text-sm">📎</span>
+                    공통 참고
+                </h2>
+                <ul id="courses-notes" class="space-y-2 text-sm text-gray-700 leading-relaxed break-keep"></ul>
+            </section>
+
+            <div class="flex flex-col sm:flex-row gap-3">
+                <button onclick="backFromCourses()" class="flex-1 py-4 rounded-2xl bg-white border border-gray-200 font-bold text-sm text-gray-600 hover:bg-gray-50 transition-colors">&larr; 전체 지도로 돌아가기</button>
+                <button onclick="openNetworkPage()" class="flex-1 py-4 rounded-2xl bg-white border border-gray-200 font-bold text-sm text-gray-600 hover:bg-gray-50 transition-colors">🕸️ 통합 지식 네트워크 보기</button>
+            </div>
+
+            <p class="text-[11px] text-gray-400 text-center leading-relaxed break-keep pt-2">
+                busan_democracy_tour_courses.docx 기획서를 기반으로 구성했습니다.<br class="hidden sm:block">
+                민주화운동기념사업회 오픈아카이브 · 부산민주공원 역사아카이브 사료 기반.
+            </p>
+        </main>
+    </div>
+
+    <!-- Archive Modal -->
+    <div id="archive-modal" class="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm modal-fade flex items-center justify-center p-4">
+        <div class="bg-white rounded-3xl shadow-2xl max-w-2xl w-full overflow-hidden transform transition-transform scale-95 flex flex-col max-h-[85vh]" id="modal-content-box">
+            <button onclick="closeArchiveModal()" class="absolute top-4 right-4 w-8 h-8 bg-black/30 hover:bg-black/50 text-white rounded-full flex items-center justify-center transition-colors z-10">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+            </button>
+            <div class="grid grid-cols-1 sm:grid-cols-2 overflow-y-auto custom-scrollbar">
+                <div class="relative h-48 sm:h-auto shrink-0" id="modal-image-wrap">
+                    <img id="modal-img" src="" alt="" class="w-full h-full object-cover hidden">
+                    <div id="modal-icon-fallback" class="w-full h-full flex items-center justify-center text-6xl"></div>
+                    <p id="modal-image-credit" class="absolute bottom-0 inset-x-0 text-[10px] text-white/90 bg-black/35 px-3 py-1.5"></p>
+                </div>
+                <div class="p-5 sm:p-8">
+                    <span id="modal-type" class="inline-block px-3 py-1 rounded-lg text-xs font-black tracking-widest uppercase mb-4">분류</span>
+                    <h3 id="modal-title" class="text-xl sm:text-2xl font-black mb-4 text-gray-900 break-keep">제목</h3>
+                    <div class="w-12 h-1 bg-gray-200 mb-5" id="modal-divider"></div>
+                    <p id="modal-desc" class="text-sm text-gray-700 leading-loose break-keep">상세 내용</p>
+                    <p id="modal-credit" class="text-[11px] text-gray-400 mt-5 pt-4 border-t border-gray-100"></p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Image Modal -->
+    <div id="image-modal" class="fixed inset-0 z-[250] bg-black/90 backdrop-blur-md modal-fade flex items-center justify-center p-4 sm:p-8">
+        <button onclick="closeImageModal()" class="absolute top-6 right-6 w-10 h-10 bg-white/10 hover:bg-white/30 text-white rounded-full flex items-center justify-center transition-colors z-10">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+        </button>
+        <div class="max-w-5xl w-full flex flex-col items-center transform transition-transform scale-95" id="image-modal-content">
+            <img id="modal-img-display" src="" alt="Gallery Image" class="max-h-[70vh] object-contain rounded-lg shadow-2xl">
+            <div class="mt-6 text-center text-white w-full max-w-2xl">
+                <h3 id="modal-img-title" class="text-lg sm:text-xl font-bold mb-2 break-keep">사진 제목</h3>
+                <p id="modal-img-source" class="text-xs sm:text-sm text-gray-400 opacity-80 mt-2">출처: </p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        /*
+         * courseData: democracy_*.csv(부산민주공원 계열) + archive_*.csv(민주화운동기념사업회 오픈아카이브·
+         * 부산민주공원 역사아카이브 직접 조사) 를 병합한 통합 데이터셋.
+         * 사진은 전부 Wikimedia Commons의 CC 라이선스 실사진(오늘날의 현장) — 당시 시위 사진이 아님을 명시.
+         */
+        const courseData = {
+            '419': {
+                tag: 'Course 01',
+                title: '3·15의 분노에서<br>4·19 혁명까지',
+                desc: '1960년 3·15 마산의거에서 4·19 혁명까지, 부산 학생과 시민들이 걸어간 13곳의 현장을 따라갑니다.',
+                color: '#d32f2f',
+                gallery: [
+                    { url: 'https://upload.wikimedia.org/wikipedia/commons/0/0d/Democracy_Monument%2C_Busan.jpg', title: '오늘날의 사월 민주 혁명 희생자 위령탑(민주공원)', source: '촬영: Ken Eckert · CC BY-SA 4.0 · Wikimedia Commons' },
+                    { url: 'https://upload.wikimedia.org/wikipedia/commons/0/0e/Jagalchi_Market_01.jpg', title: '오늘날의 남포동·자갈치시장 일대', source: '촬영: Bernard Gagnon · CC0 · Wikimedia Commons' },
+                    { url: 'https://upload.wikimedia.org/wikipedia/commons/9/94/130318_Seomyeon_Rotary_1.jpg', title: '오늘날의 서면 로터리(부산진경찰서 인근)', source: '촬영: Roadgo · CC BY-SA 3.0 · Wikimedia Commons' },
+                    { url: 'https://upload.wikimedia.org/wikipedia/commons/f/f6/Street_in_Jung-gu%2C_Busan.jpg', title: '오늘날의 중앙동 거리(국제신보 필화 사건 현장)', source: '촬영: Christophe95 · CC BY-SA 4.0 · Wikimedia Commons' }
+                ],
+                spots: [
+                    { id: '419-1', name: '남성동파출소[마산]', lat: 35.2095, lng: 128.5754, cat: '파출소', desc: '3·15 마산의거 당시 경찰이 시위대에 처음 발포한 곳입니다. 민주당 마산시당의 선거포기 선언
